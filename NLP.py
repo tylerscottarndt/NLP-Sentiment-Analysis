@@ -4,7 +4,7 @@ from DataFormatter import DataFormatter
 from sklearn.svm import SVC
 data_formatter = DataFormatter()
 data_files = np.load('review_data.npz')
-
+param_files = np.load('optimal_parameters.npz')
 
 class NLP:
     def __init__(self):
@@ -13,6 +13,9 @@ class NLP:
         self.x_test = data_files['x_test']
         self.y_test = data_files['y_test']
         self.vocabulary = self.__generate_vocabulary(self.x_train)
+        self.vocab_lower_thresh = param_files['optimal_lower_thresh']
+        self.vocab_upper_thresh = param_files['optimal_upper_thresh']
+        self.c_val = param_files['optimal_c_val']
 
     def __generate_vocabulary(self, x_train):
         dict = {}
@@ -36,7 +39,46 @@ class NLP:
 
         return bag_of_words
 
-    def tune_on_kfolds(self, k_folds, sample_vector, targets, c_val):
+    def train_on_grid_search(self, thresh_val_range, c_val_range):
+        optimal_thresh_vals = []
+        optimal_c_val = ""
+        highest_accuracy = 0
+        accuracy_results = []
+        for thresh_val in thresh_val_range:
+            bag_of_words = self.generate_bag_of_words(self.vocabulary, thresh_val[0], thresh_val[1])
+            training_vector = data_formatter.vectorize(self.x_train, bag_of_words)
+            for c_val in c_val_range:
+                accuracy = self.__tune_on_kfolds(5, training_vector, nlp.y_train, c_val)
+                print("ACCURACY: %" + str(accuracy))
+                print("Lower-Threshold: " + str(thresh_val[0]))
+                print("Upper-Threshold: " + str(thresh_val[1]))
+                print("C-Value: " + str(c_val) + "\n")
+
+                if accuracy > highest_accuracy:
+                    optimal_thresh_vals = thresh_val
+                    optimal_c_val = c_val
+                    highest_accuracy = accuracy
+
+        print("WINNER: %" + str(highest_accuracy))
+        print("Lower-Threshold: " + str(optimal_thresh_vals[0]))
+        print("Upper-Threshold: " + str(optimal_thresh_vals[1]))
+        print("C-Value: " + str(optimal_c_val))
+
+        plt.plot(accuracy_results, marker=".")
+        plt.title("Correct Predictions over Grid Search", fontsize=15)
+        plt.xlabel("Tests")
+        plt.ylabel("Correct Predictions")
+        plt.show()
+
+        print("Saving...")
+        np.savez('optimal_parameters.npz',
+                 optimal_lower_thresh=optimal_thresh_vals[0],
+                 optimal_upper_thresh=optimal_thresh_vals[1],
+                 optimal_c_val=optimal_c_val)
+
+        print("Saved!")
+
+    def __tune_on_kfolds(self, k_folds, sample_vector, targets, c_val):
         print("Tuning on K-Folds...")
         svm = SVC(kernel='linear', random_state=1)
         svm.C = c_val
@@ -66,7 +108,7 @@ class NLP:
                 if predictions[p] == test_fold_targets[p]:
                     correct_predictions += 1
 
-        # return accuracy value
+        '''return accuracy value'''
         return correct_predictions/len(sample_vector)
 
 
@@ -76,52 +118,20 @@ if __name__ == '__main__':
 
     thresh_val_range = [[5, 2000], [25, 1000], [50, 500]]
     c_val_range = [0.0001, 1, 1000]
+    # nlp.train_on_grid_search(thresh_val_range, c_val_range)
 
-    best_thresh_val = ""
-    best_c_val = ""
-    accuracy_results = []
-    highest_accuracy = 0
-    for thresh_val in thresh_val_range:
-        bag_of_words = nlp.generate_bag_of_words(nlp.vocabulary, thresh_val[0], thresh_val[1])
-        training_vector = data_formatter.vectorize(nlp.x_train, bag_of_words)
-        testing_vector = data_formatter.vectorize(nlp.x_test, bag_of_words)
-        accuracy = ""
-        for c_val in c_val_range:
-            accuracy = nlp.tune_on_kfolds(5, training_vector, nlp.y_train, c_val)
-            accuracy_results.append(accuracy)
-            print("ACCURACY: %" + str(accuracy))
-            print("Lower-Threshold: " + str(thresh_val[0]))
-            print("Upper-Threshold: " + str(thresh_val[1]))
-            print("C-Value: " + str(c_val) + "\n")
-
-            if accuracy > highest_accuracy:
-                best_thresh_val = thresh_val
-                best_c_val = c_val
-                highest_accuracy = accuracy
-
-    print("WINNER: %" + str(highest_accuracy))
-    print("Lower-Threshold: " + str(best_thresh_val[0]))
-    print("Upper-Threshold: " + str(best_thresh_val[1]))
-    print("C-Value: " + str(best_c_val))
-
-    plt.plot(accuracy_results, marker=".")
-    plt.title("Correct Predictions over Grid Search", fontsize=15)
-    plt.xlabel("Tests")
-    plt.ylabel("Correct Predictions")
-    plt.show()
-
-    # predicting results on test set
-    bag_of_words = nlp.generate_bag_of_words(nlp.vocabulary, best_thresh_val[0], best_thresh_val[1])
+    '''predicting results on test set'''
+    bag_of_words = nlp.generate_bag_of_words(nlp.vocabulary, nlp.vocab_lower_thresh, nlp.vocab_upper_thresh)
     training_vector = data_formatter.vectorize(nlp.x_train, bag_of_words)
     testing_vector = data_formatter.vectorize(nlp.x_test, bag_of_words)
     svm = SVC(kernel='linear', random_state=1)
-    svm.C = best_c_val
-    print("Training model on ...")
+    svm.C = nlp.c_val
+    print("Training svm...")
     svm.fit(training_vector, nlp.y_train)
     print("Predicting model...")
     test_predictions = svm.predict(testing_vector)
     correct_predictions = 0
-    for i,_ in enumerate(test_predictions):
+    for i, _ in enumerate(test_predictions):
         if test_predictions[i] == nlp.y_test[i]:
             correct_predictions += 1
 
